@@ -1,0 +1,4 @@
+[GuessIdiom]
+enable = true
+commands = ["猜成语"]
+self.game_timeout = 60
