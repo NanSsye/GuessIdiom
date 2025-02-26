@@ -156,49 +156,90 @@ class GuessIdiom(PluginBase):
             return True
 
         content = message["Content"].strip()
-        command = content.split(" ")[0] if content else ""
         chat_id = message["FromWxid"]
         user_wxid = message["SenderWxid"]
 
-        # 先检查是否是排行榜命令
-        if content == "猜成语排行榜":
-            try:
-                # 获取排行榜数据
-                leaderboard = self.game_db.get_leaderboard(10)
-                
-                if not leaderboard:
-                    await bot.send_at_message(
-                        chat_id,
-                        XYBOT_PREFIX + "暂时还没有人玩游戏哦，快来试试吧！",
-                        [user_wxid]
-                    )
-                    return False
+        if content == "猜成语":
+            # 获取用户战绩
+            stats = self.game_db.get_user_stats(user_wxid)
+            play_count, correct_count, total_points = stats
+            user_nickname = await bot.get_nickname(user_wxid)
 
-                # 构建排行榜消息
-                msg = "🏆 猜成语积分排行榜 TOP10 🏆\n\n"
+            # 获取排行榜前五名
+            leaderboard = self.game_db.get_leaderboard(5)
+            leaderboard_message = "🏆 猜成语积分排行榜 TOP5 🏆\n\n"
+            if leaderboard:
                 for rank, (wxid, play_count, correct_count, total_points) in enumerate(leaderboard, 1):
-                    accuracy = (correct_count / play_count * 100) if play_count > 0 else 0
-                    msg += (f"第{rank}名: {total_points}积分\n"
-                           f"游玩{play_count}次 | 猜对{correct_count}次 | 正确率{accuracy:.1f}%\n"
-                           f"------------------------\n")
+                    user_nickname = await bot.get_nickname(wxid)  # 获取每个用户的昵称
+                    leaderboard_message += (f"第{rank}名: {user_nickname} - {total_points}积分 🎖️\n"
+                                            f"游玩{play_count}次 | 猜对{correct_count}次 🥇\n"
+                                            f"------------------------\n")
+            else:
+                leaderboard_message += "暂时还没有人玩游戏哦，快来试试吧！🎉"
 
-                await bot.send_at_message(chat_id, XYBOT_PREFIX + msg, [user_wxid])
-                return False
-            except Exception as e:
-                logger.error(f"获取排行榜失败: {e}")
-                await bot.send_at_message(
-                    chat_id,
-                    XYBOT_PREFIX + "获取排行榜失败，请稍后再试！",
-                    [user_wxid]
-                )
-                return False
+            # 构建完整消息
+            gameplay_message = (
+                "🎮 看图猜成语游戏 🎮\n"
+                "发送'开始'或'猜成语'开始游戏！🚀\n"
+                "发送'提示'获取成语提示！💡\n"
+                "发送'我猜 <你的答案>'提交答案！🤔\n"
+                "发送'我的猜成语战绩'可查询战绩 📊\n"
+                "发送'猜成语排行榜'可查询排行榜 🏅\n"
+                "发送'退出'结束游戏！❌\n"
+                "快来试试你的成语功底吧！😎\n\n"
+            )
 
-        if command in self.commands or content == "开始":
+            user_stats_message = (
+                f"你的战绩:\n"
+                f"游玩次数: {play_count}次 🎮\n"
+                f"猜对次数: {correct_count}次 ✅\n"
+                f"总积分: {total_points}分 💰\n\n"
+            )
+
+            # 合并所有消息
+            full_message = gameplay_message + user_stats_message + leaderboard_message
+
+            # 发送合并后的消息
+            await bot.send_text_message(chat_id, full_message)
+
+            # 开始游戏
             success = await self.start_game(bot, message, chat_id, user_wxid)
             if success:
                 return False
             else:
                 return True
+
+        elif content == "我的猜成语战绩":
+            # 获取用户战绩
+            stats = self.game_db.get_user_stats(user_wxid)
+            play_count, correct_count, total_points = stats
+            user_nickname = await bot.get_nickname(user_wxid)
+            if play_count > 0:
+                accuracy = (correct_count / play_count * 100)
+                msg = (f"🎮 {user_nickname} 的猜成语战绩 🎮\n\n"
+                       f"总计获得: {total_points}积分\n"
+                       f"游玩次数: {play_count}次\n"
+                       f"猜对次数: {correct_count}次\n"
+                       f"正确率: {accuracy:.1f}%")
+            else:
+                msg = f"{user_nickname} 还没有玩过猜成语游戏哦，快来试试吧！"
+            await bot.send_at_message(chat_id, XYBOT_PREFIX + msg, [user_wxid])
+            return False
+
+        elif content == "猜成语排行榜":
+            # 获取排行榜前五名
+            leaderboard = self.game_db.get_leaderboard(5)
+            if leaderboard:
+                leaderboard_message = "🏆 猜成语积分排行榜 TOP5 🏆\n\n"
+                for rank, (wxid, play_count, correct_count, total_points) in enumerate(leaderboard, 1):
+                    user_nickname = await bot.get_nickname(wxid)  # 获取每个用户的昵称
+                    leaderboard_message += (f"第{rank}名: {user_nickname} - {total_points}积分\n"
+                                            f"游玩{play_count}次 | 猜对{correct_count}次\n"
+                                            f"------------------------\n")
+                await bot.send_text_message(chat_id, leaderboard_message)
+            else:
+                await bot.send_text_message(chat_id, "暂时还没有人玩游戏哦，快来试试吧！")
+            return False
 
         if content == "提示":
             await self.get_hint(bot, message, chat_id, user_wxid)
@@ -213,21 +254,6 @@ class GuessIdiom(PluginBase):
             await self.check_answer(bot, message, chat_id, user_wxid, guess)
             return False
 
-        if content.startswith("我的猜成语战绩"):
-            stats = self.game_db.get_user_stats(user_wxid)
-            play_count, correct_count, total_points = stats
-            if play_count > 0:
-                accuracy = (correct_count / play_count * 100)
-                msg = (f"🎮 你的猜成语战绩 🎮\n\n"
-                      f"总计获得: {total_points}积分\n"
-                      f"游玩次数: {play_count}次\n"
-                      f"猜对次数: {correct_count}次\n"
-                      f"正确率: {accuracy:.1f}%")
-            else:
-                msg = "你还没有玩过猜成语游戏哦，快来试试吧！"
-            await bot.send_at_message(chat_id, XYBOT_PREFIX + msg, [user_wxid])
-            return False
-
         if user_wxid in self.game_sessions:
             await bot.send_text_message(chat_id, XYBOT_PREFIX + GAME_TIP)
             return False
@@ -240,10 +266,18 @@ class GuessIdiom(PluginBase):
         if user_wxid in self.game_sessions and "timeout_task" in self.game_sessions[user_wxid]:
             self.game_sessions[user_wxid]["timeout_task"].cancel()
 
-        if user_wxid in self.game_sessions:
-            current_level = self.game_sessions[user_wxid].get("current_level", 1)
-        else:
-            current_level = 1
+        # 初始化游戏会话
+        if user_wxid not in self.game_sessions:
+            self.game_sessions[user_wxid] = {
+                "current_level": 1,
+                "hint_used": False,  # 添加提示使用标记
+                "pic_path": None,
+                "timeout_task": None,
+                "answer": None,
+                "hint": None
+            }
+
+        current_level = self.game_sessions[user_wxid]["current_level"]
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -305,17 +339,18 @@ class GuessIdiom(PluginBase):
                         [user_wxid]
                     )
 
+                    # 保存答案和提示
+                    self.game_sessions[user_wxid]["answer"] = data["data"]["answer"]
+                    self.game_sessions[user_wxid]["hint"] = data["data"]["msg"]
+
                     # 设置新的超时任务
                     timeout_task = asyncio.create_task(
                         self.game_timeout_handler(bot, chat_id, user_wxid)
                     )
                     
                     # 更新游戏会话
-                    self.game_sessions[user_wxid] = {
-                        "pic_path": pic_path,
-                        "timeout_task": timeout_task,
-                        "current_level": current_level
-                    }
+                    self.game_sessions[user_wxid]["pic_path"] = pic_path
+                    self.game_sessions[user_wxid]["timeout_task"] = timeout_task
 
                     return True
 
@@ -330,20 +365,14 @@ class GuessIdiom(PluginBase):
             await bot.send_at_message(chat_id, XYBOT_PREFIX + '🤔 你还没开始游戏哦！发送"开始"试试吧！', [user_wxid])
             return
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                params = {"msg": "提示", "id": user_wxid}
-                async with session.get(GAME_API_URL, params=params) as resp:
-                    if resp.status != 200:
-                        return
-                    data = await resp.json()
-                    if data["code"] != 200:
-                        return
-                    answer = data["data"]["answer"]
-                    hint = data["data"]["msg"]
-                    await bot.send_at_message(chat_id, XYBOT_PREFIX + f'💡 提示来啦：{hint}\n快猜猜吧！', [user_wxid])
-        except Exception as e:
-            logger.error(f"获取提示失败: {e}")
+        # 从游戏会话中获取答案
+        answer = self.game_sessions[user_wxid].get("answer")
+        if answer:
+            # 提示为答案的第一个字
+            hint = answer[0]  # 获取答案的第一个字
+            await bot.send_at_message(chat_id, XYBOT_PREFIX + f'💡 提示来啦：{hint}\n快猜猜吧！', [user_wxid])
+        else:
+            await bot.send_at_message(chat_id, XYBOT_PREFIX + '🤔 目前没有可用的提示！', [user_wxid])
 
     async def check_answer(self, bot: WechatAPIClient, message: dict, chat_id: str, user_wxid: str, guess: str):
         """检查用户答案是否正确"""
